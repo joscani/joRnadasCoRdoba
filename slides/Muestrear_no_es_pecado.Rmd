@@ -1,0 +1,324 @@
+---
+title: "Muestrear no es pecado"
+subtitle: "Estadísticos en big data"
+author: "José Luis Cañadas Reche"
+institute: "Orange Spain"
+date: "2022/11/04 (updated: `r Sys.Date()`)"
+output:
+  xaringan::moon_reader:
+    self_contained: true
+    css: [default, 1.css]
+    includes:
+      after_body: insert-logo.html
+    nature:
+      slideNumberFormat: "%current%"
+      highlightStyle: github
+      highlightLines: true
+      ratio: 16:9
+      countIncrementalSlides: false
+---
+
+```{css, echo = FALSE}
+.remark-slide-content {
+  font-size: 24px;
+  padding: 20px 80px 20px 80px;
+}
+.remark-code, .remark-inline-code {
+  background: #f0f0f0;
+}
+.remark-code {
+  font-size: 14px;
+}
+.huge .remark-code { /*Change made here*/
+  font-size: 150% !important;
+}
+.tiny .remark-code { /*Change made here*/
+  font-size: 50% !important;
+}
+```
+
+
+
+
+```{r setup, include=FALSE}
+options(htmltools.dir.version = FALSE)
+knitr::opts_chunk$set(
+  fig.retina = 3,
+  out.width = "100%",
+  cache = FALSE,
+  comment = "#>",
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  hiline = TRUE,
+  dpi = 300
+)
+
+
+```
+
+
+
+## Muestrear no es pecado
+
+* Grandes empresas, áreas de big data
+
+* Perfiles científicos de datos: Físicos, telecos, matemáticos, ¿estadísticos? 
+
+
+
+???
+* Hay mucho advenedizo que programa bien, pero le faltan las bases
+
+---
+
+## Muestreo
+
+* Tenemos grandes volúmenes de datos.
+
+  - 4 millones de filas por día y 170 variables.
+  
+  - Modelos requieren tener varios días de entrenamiento, (120 millones de filas a veces)
+  
+* Estrategias 
+  - Muestreo estratificado por variables claves, (meses, días semana, otras variables)
+  
+  - Submuestro de la categoría mayoritaria (clientes no fugan)
+
+???
+* Mucha gente tira con todos los datos, pérdida de tiempo
+* La potencia sin control no sirve de nada
+
+---
+
+## Muestreo (código en R)
+
+
+```{r, echo = FALSE}
+
+library(tidyverse)
+library(sparklyr)
+
+sc <- spark_connect(master = "local", spark_home = "~/spark/spark-3.0.0-bin-hadoop2.7/")
+
+tmp <- sc %>%  
+  spark_read_parquet(path = "/media/hd1/canadasreche@gmail.com/mi_blog/data/bd_pobres.parquet" )
+
+```
+
+.pull-left[
+```{r}
+ 
+tmp %>%  head(3)
+tmp %>% 
+  group_by(segmento) %>% 
+  count()
+```
+]
+
+.pull-right[
+
+
+```{r}
+tmp_sample <- tmp %>%
+  group_by(segmento) %>%
+  sdf_sample(fraction = 0.5,
+             replacement = FALSE,
+             seed = 155)
+```
+
+```{r}
+
+tmp_sample %>% 
+  group_by(segmento) %>% 
+  count()
+
+```
+]
+
+
+---
+
+
+## Agregaciones y frecuencias
+
+* Inconcebiblemente mucha gente no entiende este concepto.
+
+* Ayuda a tener misma información ocupando menos
+
+* Mejora computacional
+
+* Utilizar técnicas no disponibles en herramientas big data sin perder info
+
+---
+
+## Agregaciones y frecuencias (código)
+
+.pull-left[
+
+```{r}
+sdf_nrow(tmp)
+```
+
+```{r}
+head(tmp, 5)
+```
+
+]
+
+.pull-right[
+
+
+```{r}
+tmp_agregado <- tmp %>%
+  group_by(valor_cliente, edad, segmento, tipo) %>%
+  count() %>% 
+  arrange(desc(n))
+
+head(tmp_agregado, 10)
+```
+
+```{r}
+
+sdf_nrow(tmp_agregado)
+
+```
+]
+---
+
+## Agregaciones y frecuencias (código)
+
+.pull-left[
+```{r}
+tmp_local <- tmp_agregado %>% 
+  collect()  %>% 
+  mutate(across(where(is.character), as_factor)) %>% 
+   mutate(
+         edad_cat = case_when(
+           edad <= 20 ~ "<21",
+           edad <= 40 ~ "21- 40",
+           edad <= 50 ~ "41-50", 
+           edad <= 60 ~ "40-60",
+           edad > 60 ~ ">60"
+         )
+         )
+```
+
+
+```{r}
+library(lme4)
+
+modA <-
+  glmer(
+    segmento == "Best" ~ 
+      (1 |edad_cat) + 
+      (1 | valor_cliente) + 
+      (1 | tipo),
+    data = tmp_local,
+    family = binomial,
+    weights = tmp_local$n
+  )  
+```
+]
+
+.pull-right[
+```{r, fig.height= 4}
+plots <- sjPlot::plot_model(modA,
+                   type = "re",
+                   sort.est = TRUE,
+                   grid = FALSE)
+
+plots[[2]]
+```
+]
+
+
+---
+
+## Grupos de control y proporciones pequeñas
+
+* Es sorprendente el desconocimiento que hay de la necesidad de medir.
+
+* Ahí es dónde los estadísticos resultamos fundamentales
+
+* No es extraño tener prevalencias pequeñas y hay que alertar de lo poco fiable de los grupos de control diseñados
+
+* R nos ayuda en ese cometido
+
+---
+
+## Grupos de control (código)
+
+```{r}
+library(pwr)
+
+power_analisis <- pwr.2p.test(
+  h = ES.h(p1 = 0.012 , p2 = 0.01),
+  sig.level = 0.05,
+  power = 0.8,
+  alternative = "greater"
+)
+power_analisis
+```
+---
+
+## Grupos de control (código)
+
+```{r, fig.height= 3 }
+plot(power_analisis)
+```
+
+
+???
+* Tamaño muestral inasumible para negocio en una campaña 
+* Gestionar expectativas.
+* Lo que más determina es la pasta
+* Medir incertidumbre después del experimento
+
+---
+
+## El humo lo invade todo
+
+* Vivimos épocas dónde el *hype* lo invade todo
+
+* Incluso profesionales con dilatada experiencia son víctimas del humo
+
+* Ejemplo: Librerías nuevas que prometen que van a obtener el Performance del modelo sin tener un grupo de control. Aquí un par de post desmontando tal falacia
+  - [Post en Datanalytics](https://www.datanalytics.com/2022/05/31/nannyml/)
+  - [Post en muestrear no es pecado](https://muestrear-no-es-pecado.netlify.app/2022/05/29/no-mentir-s/)
+
+
+???
+* Es muy peligroso este tipo de humo. Imaginaros que un líder técnico se cree tal falacia o peor aún, alguien de negocio. Y deciden que ya no hace falta grupos de control. La empresa puede empezar a perder dinero a espuertas sin darse cuenta. 
+
+---
+
+
+## Forma y contenido
+
+* Reinventar la rueda, olvidando el propósito
+
+* Machine Learning Engineer y devops
+
+* Representa peligro de centrarnos en la herramienta en vez de en la utilidad.
+
+???
+* Por supuesto que es útil, y debemos hacer código mantenible con test, etc..  Pero hay mucho "flipaillo" que al centrarse en la forma se olvida el contenido y la utilidad. 
+* "He visto  cosas en producción que no creeríais". Cosas bien hechas técnicamente (en cuestión de código y test) pero con escaso o nulo valor
+---
+
+## Gracias
+
+
+
+```{r, echo = FALSE, out.height="40%", fig.height=1, out.width="40%", fig.align='center'}
+knitr::include_graphics("colegio.jpg")
+
+```
+
+
+
+
+
+
+
