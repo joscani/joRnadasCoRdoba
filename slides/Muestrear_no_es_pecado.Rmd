@@ -311,7 +311,7 @@ plot(power_analisis)
 
 
 ```{r, echo = FALSE, out.height="40%", fig.height=1, out.width="40%", fig.align='center'}
-knitr::include_graphics("colegio.jpg")
+knitr::include_graphics("atocha.jpeg")
 
 ```
 
